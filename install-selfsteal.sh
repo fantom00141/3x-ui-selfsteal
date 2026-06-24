@@ -73,14 +73,17 @@ sudo apt install nginx curl git subversion -y
 # 3. Скачивание и выбор случайного шаблона
 echo "Подготовка маскировочного сайта..."
 sudo rm -rf /var/www/html/*
-sudo mkdir -p /tmp/templates
+sudo rm -rf /tmp/selfsteal_repo
 
-# Скачиваем только папку templates из вашего репозитория через SVN (чтобы не клонировать весь git со служебными файлами)
-sudo rm -rf /tmp/templates_download
-svn export https://github.com /tmp/templates_download --force
+# Скачиваем ТОЛЬКО папку templates с помощью частичного клонирования Git (Sparse-checkout)
+echo "Загрузка шаблонов из GitHub..."
+git clone --filter=blob:none --sparse https://github.com /tmp/selfsteal_repo
+cd /tmp/selfsteal_repo
+git sparse-checkout set templates
+cd - > /dev/null
 
-# Получаем список всех папок-шаблонов во временной директории
-mapfile -t SITES < <(find /tmp/templates_download -maxdepth 1 -mindepth 1 -type d)
+# Получаем список всех папок-шаблонов
+mapfile -t SITES < <(find /tmp/selfsteal_repo/templates -maxdepth 1 -mindepth 1 -type d)
 
 if [ ${#SITES[@]} -eq 0 ]; then
     echo "Ошибка: В папке templates на GitHub не найдено подпапок с шаблонами!"
@@ -98,7 +101,7 @@ else
 fi
 
 # Очищаем временные файлы
-sudo rm -rf /tmp/templates_download
+sudo rm -rf /tmp/selfsteal_repo
 
 # 4. Создание конфигурационного файла Nginx
 echo "Настройка конфигурации Nginx..."
