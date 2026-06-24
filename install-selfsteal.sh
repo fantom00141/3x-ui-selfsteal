@@ -1,63 +1,50 @@
 #!/bin/bash
 
-# === Данные вашего GitHub ===
-GITHUB_USER="fantom00141"
-REPO_NAME="3x-ui-selfsteal"
+# Выход при любой ошибке
+set -e
 
 # Цветовые коды ANSI
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
-NC='\033[0m' # No Color (Сброс цвета)
+NC='\033[0m'
 
-# Выход при любой ошибке (кроме проверок в цикле)
-set -e
-
-# Очищаем консоль перед началом работы
+# 1. Очистка экрана и приветствие
 clear
-
 echo "=== Автоматическая настройка Self-Steal со случайным шаблоном ==="
 echo ""
 
-# 1. Запрос и проверка домена
+# 2. Запрос и проверка домена
 while true; do
     echo -e -n "${YELLOW}Введите ваш домен (например, mysite.com): ${NC}"
     read DOMAIN
 
-    # Проверка 1: Пустой ввод
     if [ -z "$DOMAIN" ]; then
-        echo -e "${RED}Ошибка: Домен не может быть пустым! Попробуйте снова.${NC}\n"
+        echo -e "${RED}Ошибка: Домен не может быть пустым!${NC}\n"
         continue
     fi
 
-    # Проверка 2: Наличие русских букв (кириллицы)
     if [[ "$DOMAIN" =~ [а-яА-ЯёЁ] ]]; then
-        echo -e "${RED}Ошибка: Домен содержит русские буквы! Reality требует латиницу (Punycode не поддерживается встроенной автоматикой).${NC}\n"
+        echo -e "${RED}Ошибка: Домен содержит русские буквы! Нужна латиница.${NC}\n"
         continue
     fi
 
-    # Проверка 3: Валидация формата домена через регулярное выражение (минимум одна точка, без спецсимволов)
-    # Шаблон проверяет: буквы/цифры/дефис . зона от 2 до 6 букв
     if [[ ! "$DOMAIN" =~ ^([a-zA-Z0-9](([a-zA-Z0-9-]*[a-zA-Z0-9])?)\.)+[a-zA-Z]{2,6}$ ]]; then
-        echo -e "${RED}Ошибка: Неверный формат домена (пример правильного: mysite.com или vpn.domain.xyz). Попробуйте снова.${NC}\n"
+        echo -e "${RED}Ошибка: Неверный формат домена (пример: domain.com).${NC}\n"
         continue
     fi
-
-    # Если все проверки пройдены — выходим из цикла
     break
 done
 
-# 2. Запрос и проверка порта
+# 3. Запрос и проверка порта
 while true; do
     echo -e -n "${YELLOW}Введите локальный порт для Nginx (нажмите Enter для 8443): ${NC}"
     read PORT
 
-    # Если порт не введен, ставим по умолчанию 8443
     if [ -z "$PORT" ]; then
         PORT="8443"
         break
     fi
 
-    # Проверка: является ли ввод числом и входит ли в диапазон портов 1-65535
     if [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ]; then
         break
     else
@@ -65,59 +52,43 @@ while true; do
     fi
 done
 
+# 4. Очистка экрана перед установкой
+clear
+echo "=== Начинаем установку и настройку Nginx... ==="
+echo "Используется домен: $DOMAIN"
 echo "Используется порт: $PORT"
 echo ""
 
-# Очищаем консоль перед запуском установки
-clear
-echo "${YELLOW}=== Начинаем установку и настройку Nginx... ===${NC}"
+# 5. Обновление пакетов и установка Nginx и Git
 sudo apt update
-sudo apt install nginx curl git subversion -y
+sudo apt install nginx git -y
 
-# 3. Скачивание и выбор случайного шаблона
-echo "Подготовка маскировочного сайта..."
+# 6. Скачивание шаблонов напрямую из вашего репозитория
+echo "Загрузка шаблонов из GitHub..."
 sudo rm -rf /var/www/html/*
 sudo rm -rf /tmp/selfsteal_repo
-mkdir -p /tmp/selfsteal_repo
 
-echo "Загрузка шаблонов из GitHub..."
-# Скачиваем архив репозитория напрямую
-curl -sSL https://github.com -o /tmp/selfsteal_repo/main.zip
+git clone --depth 1 https://github.com /tmp/selfsteal_repo
 
-# Устанавливаем unzip, если его нет в системе
-if ! command -v unzip &> /dev/null; then
-    sudo apt update && sudo apt install unzip -y
-fi
-
-# Распаковываем архив во временную директорию
-unzip -q /tmp/selfsteal_repo/main.zip -d /tmp/selfsteal_repo/
-
-# Корректный путь к папке с шаблонами внутри распакованного архива GitHub
-TEMPLATE_DIR="/tmp/selfsteal_repo/3x-ui-selfsteal-main/templates"
-
-# Сканируем только папки с шаблонами внутри директории templates
+# 7. Выбор случайного шаблона
+TEMPLATE_DIR="/tmp/selfsteal_repo/templates"
 mapfile -t SITES < <(find "$TEMPLATE_DIR" -maxdepth 1 -mindepth 1 -type d)
 
 if [ ${#SITES[@]} -eq 0 ]; then
-    echo "Ошибка: В папке templates на GitHub не найдено подпапок с шаблонами!"
-    echo "Создаю стандартную заглушку..."
+    echo "Шаблоны не найдены, создаю базовую заглушку..."
     echo "<html><body><h1>Server is running.</h1></body></html>" | sudo tee /var/www/html/index.html
 else
-    # Выбираем случайный индекс из массива папок
     RANDOM_INDEX=$(( RANDOM % ${#SITES[@]} ))
     SELECTED_SITE="${SITES[$RANDOM_INDEX]}"
-    
     echo "Выбран случайный шаблон: $(basename "$SELECTED_SITE")"
-    
-    # Копируем содержимое выбранной папки в рабочую директорию Nginx
     sudo cp -r "$SELECTED_SITE"/* /var/www/html/
 fi
 
-# Очищаем временные файлы
+# Очистка временных файлов после копирования
 sudo rm -rf /tmp/selfsteal_repo
 
-# 4. Создание конфигурационного файла Nginx
-echo "Настройка конфигурации Nginx..."
+# 8. Создание конфигурации Nginx
+echo "Запись конфигурации веб-сервера..."
 cat << EOF | sudo tee /etc/nginx/sites-available/default
 server {
     listen 127.0.0.1:$PORT ssl;
@@ -136,18 +107,19 @@ server {
 }
 EOF
 
-# 5. Исправление прав доступа (рекурсивно)
-echo "Настройка прав доступа для Nginx..."
+# 9. Настройка прав доступа (рекурсивно, чтобы не было 403 ошибки)
+echo "Настройка прав доступа..."
 sudo chmod 755 /var /var/www
 sudo chmod -R 755 /var/www/html
 
-# 6. Проверка и перезапуск Nginx
-echo "Тестирование и перезапуск Nginx..."
+# 10. Проверка и перезапуск службы
+echo "Перезапуск Nginx..."
 sudo nginx -t
 sudo systemctl restart nginx
 sudo systemctl enable nginx
 
-echo "=== Настройка успешно завершена! ==="
-echo "Настройки для панели 3x-ui (блок Reality):"
-echo "1. Dest (Target): 127.0.0.1:$PORT"
-echo "2. SNI (Server Names): $DOMAIN"
+clear
+echo "=== НАСТРОЙКА УСПЕШНО ЗАВЕРШЕНА ==="
+echo "В панели 3x-ui (блок Reality) укажите:"
+echo -e "${YELLOW}Dest (Target):${NC} 127.0.0.1:$PORT"
+echo -e "${YELLOW}SNI (Server Names):${NC} $DOMAIN"
