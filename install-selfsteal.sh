@@ -78,16 +78,25 @@ sudo apt install nginx curl git subversion -y
 echo "Подготовка маскировочного сайта..."
 sudo rm -rf /var/www/html/*
 sudo rm -rf /tmp/selfsteal_repo
+mkdir -p /tmp/selfsteal_repo
 
-# Скачиваем ТОЛЬКО папку templates с помощью частичного клонирования Git (Sparse-checkout)
 echo "Загрузка шаблонов из GitHub..."
-git clone --filter=blob:none --sparse https://github.com /tmp/selfsteal_repo
-cd /tmp/selfsteal_repo
-git sparse-checkout set templates
-cd - > /dev/null
+# Скачиваем архив репозитория напрямую
+curl -sSL https://github.com -o /tmp/selfsteal_repo/main.zip
 
-# Получаем список всех папок-шаблонов
-mapfile -t SITES < <(find /tmp/selfsteal_repo/templates -maxdepth 1 -mindepth 1 -type d)
+# Устанавливаем unzip, если его нет в системе
+if ! command -v unzip &> /dev/null; then
+    sudo apt update && sudo apt install unzip -y
+fi
+
+# Распаковываем архив во временную директорию
+unzip -q /tmp/selfsteal_repo/main.zip -d /tmp/selfsteal_repo/
+
+# Корректный путь к папке с шаблонами внутри распакованного архива GitHub
+TEMPLATE_DIR="/tmp/selfsteal_repo/3x-ui-selfsteal-main/templates"
+
+# Сканируем только папки с шаблонами внутри директории templates
+mapfile -t SITES < <(find "$TEMPLATE_DIR" -maxdepth 1 -mindepth 1 -type d)
 
 if [ ${#SITES[@]} -eq 0 ]; then
     echo "Ошибка: В папке templates на GitHub не найдено подпапок с шаблонами!"
@@ -100,7 +109,7 @@ else
     
     echo "Выбран случайный шаблон: $(basename "$SELECTED_SITE")"
     
-    # Копируем содержимое выбранной папки в рабочую директорию веб-сервера
+    # Копируем содержимое выбранной папки в рабочую директорию Nginx
     sudo cp -r "$SELECTED_SITE"/* /var/www/html/
 fi
 
