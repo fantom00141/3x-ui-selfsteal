@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# === Данные вашего GitHub ===
+GITHUB_USER="fantom00141"
+REPO_NAME="3x-ui-selfsteal"
+
 # Цветовые коды ANSI
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
