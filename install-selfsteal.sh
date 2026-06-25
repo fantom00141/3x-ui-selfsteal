@@ -1,125 +1,171 @@
 #!/bin/bash
 
-# Выход при любой ошибке
 set -e
 
-# Цветовые коды ANSI
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
+# ==========================
+# Настройки
+# ==========================
 
-# 1. Очистка экрана и приветствие
+github_user="fantom00141"
+repo_name="3x-ui-selfsteal"
+
+tmp_dir="/tmp/3xui-camo-installer"
+
+# ==========================
+# Цвета
+# ==========================
+
+RED="\e[31m"
+GREEN="\e[32m"
+YELLOW="\e[33m"
+CYAN="\e[36m"
+BOLD="\e[1m"
+RESET="\e[0m"
+
+msg()   { echo -e "${YELLOW}$1${RESET}"; }
+ok()    { echo -e "${GREEN}✅ $1${RESET}"; }
+err()   { echo -e "${RED}❌ $1${RESET}"; exit 1; }
+info()  { echo -e "${CYAN}$1${RESET}"; }
+
+find_free_port() {
+    local p=$1
+    while ss -tuln | grep -q ":${p}\b"; do
+        p=$((p+1))
+    done
+    echo "$p"
+}
+
 clear
-echo "=== Автоматическая настройка Self-Steal со случайным шаблоном ==="
-echo ""
+echo -e "${CYAN}${BOLD}"
+echo "========================================="
+echo "      3XUI SelfSteal Installer"
+echo "========================================="
+echo -e "${RESET}"
 
-# 2. Запрос и проверка домена
-while true; do
-    echo -e -n "${YELLOW}Введите ваш домен (например, mysite.com): ${NC}"
-    read DOMAIN
+[ "$EUID" -eq 0 ] || err "Запустите скрипт от root."
 
-    if [ -z "$DOMAIN" ]; then
-        echo -e "${RED}Ошибка: Домен не может быть пустым!${NC}\n"
-        continue
+export DEBIAN_FRONTEND=noninteractive
+
+msg "📦 Обновление списка пакетов..."
+apt update -y
+
+for p in git curl wget unzip ca-certificates nginx; do
+    if ! dpkg -s "$p" >/dev/null 2>&1; then
+        msg "Установка $p..."
+        apt install -y "$p"
     fi
-
-    if [[ "$DOMAIN" =~ [а-яА-ЯёЁ] ]]; then
-        echo -e "${RED}Ошибка: Домен содержит русские буквы! Нужна латиница.${NC}\n"
-        continue
-    fi
-
-    if [[ ! "$DOMAIN" =~ ^([a-zA-Z0-9](([a-zA-Z0-9-]*[a-zA-Z0-9])?)\.)+[a-zA-Z]{2,6}$ ]]; then
-        echo -e "${RED}Ошибка: Неверный формат домена (пример: domain.com).${NC}\n"
-        continue
-    fi
-    break
 done
 
-# 3. Запрос и проверка порта
 while true; do
-    echo -e -n "${YELLOW}Введите локальный порт для Nginx (нажмите Enter для 8443): ${NC}"
-    read PORT
+    msg "🌐 Введите домен:"
+    read -r domain
 
-    if [ -z "$PORT" ]; then
-        PORT="8443"
+    if [[ "$domain" =~ ^([A-Za-z0-9][-A-Za-z0-9]*\.)+[A-Za-z]{2,}$ ]]; then
         break
     fi
 
-    if [[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ]; then
-        break
-    else
-        echo -e "${RED}Ошибка: Порт должен быть числом от 1 до 65535.${NC}\n"
-    fi
+    echo -e "${RED}Неверный формат домена.${RESET}"
 done
 
-# 4. Очистка экрана перед установкой
-clear
-echo "=== Начинаем установку и настройку Nginx... ==="
-echo "Используется домен: $DOMAIN"
-echo "Используется порт: $PORT"
-echo ""
+msg "📥 Загрузка репозитория..."
+rm -rf "$tmp_dir"
 
-# 5. Обновление пакетов и установка Nginx и Git
-sudo apt update
-sudo apt install nginx git -y
+git clone --depth 1 \
+"https://github.com/${github_user}/${repo_name}.git" \
+"$tmp_dir" || err "Не удалось скачать репозиторий."
 
-# 6. Скачивание шаблонов напрямую из вашего репозитория
-echo "Загрузка шаблонов из GitHub..."
-sudo rm -rf /var/www/html/*
-sudo rm -rf /tmp/selfsteal_repo
+templates_dir="${tmp_dir}/templates"
 
-git clone --depth 1 https://github.com /tmp/selfsteal_repo
+[ -d "$templates_dir" ] || err "Папка templates не найдена."
 
-# 7. Выбор случайного шаблона
-TEMPLATE_DIR="/tmp/selfsteal_repo/templates"
-mapfile -t SITES < <(find "$TEMPLATE_DIR" -maxdepth 1 -mindepth 1 -type d)
+mapfile -t templates < <(find "$templates_dir" -mindepth 1 -maxdepth 1 -type d | sort)
 
-if [ ${#SITES[@]} -eq 0 ]; then
-    echo "Шаблоны не найдены, создаю базовую заглушку..."
-    echo "<html><body><h1>Server is running.</h1></body></html>" | sudo tee /var/www/html/index.html
+[ "${#templates[@]}" -gt 0 ] || err "Шаблоны не найдены."
+
+echo
+msg "Выберите режим:"
+echo "1) Выбрать шаблон"
+echo "2) Случайный шаблон"
+read -r mode
+
+if [ "$mode" = "1" ]; then
+    echo
+    for i in "${!templates[@]}"; do
+        echo "$((i+1))) $(basename "${templates[$i]}")"
+    done
+
+    while true; do
+        echo
+        msg "Введите номер шаблона:"
+        read -r n
+
+        if [[ "$n" =~ ^[0-9]+$ ]] &&
+           [ "$n" -ge 1 ] &&
+           [ "$n" -le "${#templates[@]}" ]; then
+            template="${templates[$((n-1))]}"
+            break
+        fi
+
+        echo -e "${RED}Неверный выбор.${RESET}"
+    done
 else
-    RANDOM_INDEX=$(( RANDOM % ${#SITES[@]} ))
-    SELECTED_SITE="${SITES[$RANDOM_INDEX]}"
-    echo "Выбран случайный шаблон: $(basename "$SELECTED_SITE")"
-    sudo cp -r "$SELECTED_SITE"/* /var/www/html/
+    template=$(printf "%s\n" "${templates[@]}" | shuf -n1)
 fi
 
-# Очистка временных файлов после копирования
-sudo rm -rf /tmp/selfsteal_repo
+template_name=$(basename "$template")
 
-# 8. Создание конфигурации Nginx
-echo "Запись конфигурации веб-сервера..."
-cat << EOF | sudo tee /etc/nginx/sites-available/default
+msg "🔍 Поиск свободного порта..."
+port=$(find_free_port 9443)
+
+ok "Выбран шаблон: ${template_name}"
+ok "Свободный порт: ${port}"
+
+site_dir="/var/www/${domain}"
+
+rm -rf "$site_dir"
+mkdir -p "$site_dir"
+
+cp -a "${template}/." "$site_dir/"
+
+nginx_conf="/etc/nginx/conf.d/${domain}.conf"
+
+cat > "$nginx_conf" <<EOF
 server {
-    listen 127.0.0.1:$PORT ssl;
-    server_name $DOMAIN;
+    listen ${port};
+    server_name ${domain};
 
-    ssl_certificate /root/cert/$DOMAIN/fullchain.pem;
-    ssl_certificate_key /root/cert/$DOMAIN/privkey.pem;
-
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
+    root ${site_dir};
+    index index.html index.htm;
 
     location / {
-        root /var/www/html;
-        index index.html index.htm;
+        try_files \$uri \$uri/ /index.html;
     }
+
+    access_log off;
 }
 EOF
 
-# 9. Настройка прав доступа (рекурсивно, чтобы не было 403 ошибки)
-echo "Настройка прав доступа..."
-sudo chmod 755 /var /var/www
-sudo chmod -R 755 /var/www/html
+msg "⚙ Проверка конфигурации Nginx..."
+nginx -t || err "Ошибка в конфигурации Nginx."
 
-# 10. Проверка и перезапуск службы
-echo "Перезапуск Nginx..."
-sudo nginx -t
-sudo systemctl restart nginx
-sudo systemctl enable nginx
+systemctl enable nginx >/dev/null 2>&1 || true
+systemctl restart nginx || err "Не удалось перезапустить Nginx."
 
-clear
-echo "=== НАСТРОЙКА УСПЕШНО ЗАВЕРШЕНА ==="
-echo "В панели 3x-ui (блок Reality) укажите:"
-echo -e "${YELLOW}Dest (Target):${NC} 127.0.0.1:$PORT"
-echo -e "${YELLOW}SNI (Server Names):${NC} $DOMAIN"
+rm -rf "$tmp_dir"
+
+echo
+echo -e "${GREEN}${BOLD}"
+echo "========================================="
+echo "        ✅ Установка завершена"
+echo "========================================="
+echo -e "${RESET}"
+
+echo -e "${YELLOW}Домен:${RESET} ${GREEN}${domain}${RESET}"
+echo -e "${YELLOW}Шаблон:${RESET} ${GREEN}${template_name}${RESET}"
+echo -e "${YELLOW}Локальный порт Nginx:${RESET} ${GREEN}${port}${RESET}"
+
+echo
+echo -e "${CYAN}${BOLD}Настройки 3X-UI Reality${RESET}"
+echo
+echo -e "${YELLOW}SNI:${RESET} ${GREEN}${domain}${RESET}"
+echo -e "${YELLOW}Target:${RESET} ${GREEN}127.0.0.1:${port}${RESET}"
