@@ -8,8 +8,10 @@ set -e
 
 github_user="fantom00141"
 repo_name="3x-ui-selfsteal"
+repo_branch="94e8ffa80c4b376e360148bd803b6ea51af52542"
 
 tmp_dir="/tmp/3xui-camo-installer"
+site_dir="/var/www/html"
 
 # ==========================
 # Цвета
@@ -23,17 +25,9 @@ BOLD="\e[1m"
 RESET="\e[0m"
 
 msg()   { echo -e "${YELLOW}$1${RESET}"; }
-ok()    { echo -e "${GREEN}✅ $1${RESET}"; }
-err()   { echo -e "${RED}❌ $1${RESET}"; exit 1; }
+ok()    { echo -e "${GREEN}✓ $1${RESET}"; }
+err()   { echo -e "${RED}✗ $1${RESET}"; exit 1; }
 info()  { echo -e "${CYAN}$1${RESET}"; }
-
-find_free_port() {
-    local p=$1
-    while ss -tuln | grep -q ":${p}\b"; do
-        p=$((p+1))
-    done
-    echo "$p"
-}
 
 clear
 echo -e "${CYAN}${BOLD}"
@@ -66,6 +60,43 @@ while true; do
 
     echo -e "${RED}Неверный формат домена.${RESET}"
 done
+
+# Выбор порта
+echo
+msg "🔌 Выберите порт для Nginx:"
+echo "1) 9443 (по умолчанию)"
+echo "2) Ввести свой порт"
+read -r port_choice
+
+case $port_choice in
+    1)
+        nginx_port="9443"
+        ;;
+    2)
+        while true; do
+            msg "Введите номер порта (1024-65535):"
+            read -r custom_port
+            
+            if [[ "$custom_port" =~ ^[0-9]+$ ]] && [ "$custom_port" -ge 1024 ] && [ "$custom_port" -le 65535 ]; then
+                # Проверяем, не занят ли порт
+                if ss -tuln | grep -q ":${custom_port}\b"; then
+                    echo -e "${RED}Порт ${custom_port} уже занят. Выберите другой.${RESET}"
+                else
+                    nginx_port="$custom_port"
+                    break
+                fi
+            else
+                echo -e "${RED}Неверный порт. Введите число от 1024 до 65535.${RESET}"
+            fi
+        done
+        ;;
+    *)
+        nginx_port="9443"
+        msg "Используем порт по умолчанию: 9443"
+        ;;
+esac
+
+ok "Выбран порт: ${nginx_port}"
 
 msg "📥 Загрузка репозитория..."
 rm -rf "$tmp_dir"
@@ -114,58 +145,98 @@ fi
 
 template_name=$(basename "$template")
 
-msg "🔍 Поиск свободного порта..."
-port=$(find_free_port 9443)
-
 ok "Выбран шаблон: ${template_name}"
-ok "Свободный порт: ${port}"
 
-site_dir="/var/www/${domain}"
-
-rm -rf "$site_dir"
+# Создаем директорию если её нет
 mkdir -p "$site_dir"
 
-cp -a "${template}/." "$site_dir/"
+# Очищаем директорию
+rm -rf "${site_dir:?}"/*
 
-nginx_conf="/etc/nginx/conf.d/${domain}.conf"
+# Копируем файлы шаблона в /var/www/html/
+cp -r "${template}/." "$site_dir/"
 
+# Путь к конфигурации Nginx
+nginx_conf="/etc/nginx/sites-available/default"
+
+# Проверяем, существует ли файл конфигурации
+if [ -f "$nginx_conf" ]; then
+    # Создаем бэкап с датой
+    backup_name="${nginx_conf}.bak.$(date +%Y%m%d_%H%M%S)"
+    cp "$nginx_conf" "$backup_name"
+    ok "Создан бэкап: ${backup_name}"
+fi
+
+# Создаем новую конфигурацию
 cat > "$nginx_conf" <<EOF
 server {
-    listen ${port};
+    # Слушаем только локально
+    listen 127.0.0.1:${nginx_port} ssl;
     server_name ${domain};
 
-    root ${site_dir};
-    index index.html index.htm;
+    # Ваши готовые сертификаты
+    ssl_certificate /root/cert/${domain}/fullchain.pem;
+    ssl_certificate_key /root/cert/${domain}/privkey.pem;
 
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # Статический сайт
     location / {
+        root /var/www/html;
+        index index.html index.htm;
         try_files \$uri \$uri/ /index.html;
     }
 
-    access_log off;
+    access_log /var/log/nginx/${domain}_access.log;
+    error_log /var/log/nginx/${domain}_error.log;
 }
 EOF
 
 msg "⚙ Проверка конфигурации Nginx..."
 nginx -t || err "Ошибка в конфигурации Nginx."
 
+# Устанавливаем правильные права доступа
+msg "🔧 Настройка прав доступа..."
+sudo chmod 755 /var /var/www /var/www/html 2>/dev/null || true
+sudo chmod 644 /var/www/html/* 2>/dev/null || true
+sudo chmod -R 755 /var/www/html 2>/dev/null || true
+
+# Перезапускаем Nginx
 systemctl enable nginx >/dev/null 2>&1 || true
 systemctl restart nginx || err "Не удалось перезапустить Nginx."
+systemctl reload nginx || err "Не удалось перезагрузить Nginx."
 
+# Проверяем, что порт слушается
+sleep 2
+if ss -tuln | grep -q ":${nginx_port}\b"; then
+    ok "Nginx успешно запущен на порту ${nginx_port}"
+else
+    msg "⚠ Внимание: порт ${nginx_port} не обнаружен в прослушивании"
+fi
+
+# Очистка
 rm -rf "$tmp_dir"
 
 echo
 echo -e "${GREEN}${BOLD}"
 echo "========================================="
-echo "        ✅ Установка завершена"
+echo "        ✓ Установка завершена"
 echo "========================================="
 echo -e "${RESET}"
 
 echo -e "${YELLOW}Домен:${RESET} ${GREEN}${domain}${RESET}"
 echo -e "${YELLOW}Шаблон:${RESET} ${GREEN}${template_name}${RESET}"
-echo -e "${YELLOW}Локальный порт Nginx:${RESET} ${GREEN}${port}${RESET}"
+echo -e "${YELLOW}Путь к файлам:${RESET} ${GREEN}${site_dir}${RESET}"
+echo -e "${YELLOW}Порт Nginx:${RESET} ${GREEN}${nginx_port}${RESET}"
 
 echo
 echo -e "${CYAN}${BOLD}Настройки 3X-UI Reality${RESET}"
 echo
 echo -e "${YELLOW}SNI:${RESET} ${GREEN}${domain}${RESET}"
-echo -e "${YELLOW}Target:${RESET} ${GREEN}127.0.0.1:${port}${RESET}"
+echo -e "${YELLOW}Target:${RESET} ${GREEN}127.0.0.1:${nginx_port}${RESET}"
+echo
+echo -e "${YELLOW}Путь к сертификатам:${RESET} ${GREEN}/root/cert/${domain}/${RESET}"
+echo
+echo -e "${CYAN}Проверка статуса Nginx:${RESET}"
+systemctl status nginx --no-pager | head -n 5
