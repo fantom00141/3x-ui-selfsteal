@@ -193,6 +193,11 @@ server {
 }
 EOF
 
+echo -e "${BLUE}▶ Активация конфигурации...${NC}"
+
+rm -f /etc/nginx/sites-enabled/default
+ln -s /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+
 msg "⚙ Проверка конфигурации Nginx..."
 nginx -t || err "Ошибка в конфигурации Nginx."
 
