@@ -8,7 +8,6 @@ set -e
 
 github_user="fantom00141"
 repo_name="3x-ui-selfsteal"
-repo_branch="94e8ffa80c4b376e360148bd803b6ea51af52542"
 
 tmp_dir="/tmp/3xui-camo-installer"
 site_dir="/var/www/html"
@@ -60,6 +59,12 @@ while true; do
 
     echo -e "${RED}Неверный формат домена.${RESET}"
 done
+
+CERT_DIR="/root/cert/${domain}"
+
+[ -f "$CERT_DIR/fullchain.pem" ] || err "Не найден fullchain.pem"
+
+[ -f "$CERT_DIR/privkey.pem" ] || err "Не найден privkey.pem"
 
 # Выбор порта
 echo
@@ -193,31 +198,41 @@ server {
 }
 EOF
 
-echo -e "${BLUE}▶ Активация конфигурации...${NC}"
+msg "▶ Активация конфигурации..."
 
 rm -f /etc/nginx/sites-enabled/default
-ln -s /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+ln -sfn /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
 msg "⚙ Проверка конфигурации Nginx..."
 nginx -t || err "Ошибка в конфигурации Nginx."
 
 # Устанавливаем правильные права доступа
 msg "🔧 Настройка прав доступа..."
-sudo chmod 755 /var /var/www /var/www/html 2>/dev/null || true
-sudo chmod 644 /var/www/html/* 2>/dev/null || true
-sudo chmod -R 755 /var/www/html 2>/dev/null || true
+chmod 755 /var /var/www
+find /var/www/html -type d -exec chmod 755 {} \;
+find /var/www/html -type f -exec chmod 644 {} \;
 
 # Перезапускаем Nginx
 systemctl enable nginx >/dev/null 2>&1 || true
 systemctl restart nginx || err "Не удалось перезапустить Nginx."
 systemctl reload nginx || err "Не удалось перезагрузить Nginx."
 
+msg "🌐 Проверка сайта..."
+
+HTTP_CODE=$(curl -k -L --connect-timeout 5 -o /dev/null -s -w "%{http_code}" https://127.0.0.1:${nginx_port})
+
+if [ "$HTTP_CODE" != "200" ]; then
+    err "Сайт не отвечает (HTTP ${HTTP_CODE})"
+fi
+
+ok "Сайт успешно отвечает."
+
 # Проверяем, что порт слушается
 sleep 2
-if ss -tuln | grep -q ":${nginx_port}\b"; then
+if ss -tln | grep -q "127.0.0.1:${nginx_port}"; then
     ok "Nginx успешно запущен на порту ${nginx_port}"
 else
-    msg "⚠ Внимание: порт ${nginx_port} не обнаружен в прослушивании"
+    err "Nginx не слушает порт ${nginx_port}."
 fi
 
 # Очистка
